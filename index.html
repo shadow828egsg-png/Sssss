@@ -1,0 +1,553 @@
+
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Urban Runner 3D</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#080d18;color:white;font-family:Arial,sans-serif;overflow:hidden}
+button{border:0;border-radius:12px;padding:13px 20px;font-weight:bold;font-size:16px;color:white;background:#ff8c00;cursor:pointer}
+button:active{transform:scale(.96)}
+#game{position:fixed;inset:0;display:none}
+canvas{display:block}
+#menu{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;background:linear-gradient(#08152acc,#111827dd),linear-gradient(135deg,#087eaa,#182848)}
+.panel{width:min(92%,420px);padding:25px 20px;background:#101827ee;border:2px solid #ffffff22;border-radius:22px;box-shadow:0 15px 50px #0008}
+h1{font-size:36px;margin:5px 0;color:#ffb12b;text-shadow:0 3px 15px #ff8c0077}
+h2{margin:8px}
+.subtitle{color:#b8c7dc;margin:8px 0 20px}
+.menuButtons{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}
+.menuButtons button:first-child{grid-column:span 2;background:#16a34a;font-size:21px}
+.secondary{background:#26364e}
+#hud{position:absolute;top:12px;left:12px;right:12px;display:none;justify-content:space-between;gap:8px;pointer-events:none}
+.hudBox{background:#07111dcc;border:1px solid #ffffff33;border-radius:12px;padding:9px 12px;font-weight:bold}
+#pause{position:absolute;right:14px;top:75px;display:none;pointer-events:auto;background:#26364e}
+#timer{position:absolute;top:75px;left:14px;background:#07111ddd;border:1px solid #ffffff44;padding:9px 13px;border-radius:12px;display:none;touch-action:none}
+#message{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:#0009;text-align:center}
+#message .panel{max-width:340px}
+#message p{color:#cbd5e1}
+#subpanel{display:none;position:fixed;inset:0;align-items:center;justify-content:center;background:#000b;text-align:center}
+#subpanel .panel{max-width:360px}
+.option{margin:6px;background:#26364e}
+#help{font-size:12px;color:#aabbd0;line-height:1.6;margin-top:16px}
+@media(max-width:500px){h1{font-size:30px}.panel{padding:20px 14px}.hudBox{font-size:12px;padding:8px}}
+</style>
+</head>
+<body>
+
+<div id="menu">
+  <div class="panel">
+    <h1>URBAN RUNNER 3D</h1>
+    <div class="subtitle">Corra pela cidade e bata seu recorde!</div>
+    <div>🏙️ 🪙 🚆 🏃</div>
+    <div class="menuButtons">
+      <button id="play">▶ JOGAR</button>
+      <button class="secondary" id="maps">🗺️ MAPAS</button>
+      <button class="secondary" id="characters">👤 PERSONAGENS</button>
+      <button class="secondary" id="ranking">🏆 RANKING</button>
+      <button class="secondary" id="sound">🔊 SOM: LIGADO</button>
+    </div>
+    <div id="help">Deslize para os lados para mudar de pista.<br>Deslize para cima para pular e para baixo para abaixar.<br>No computador: A/D, setas, W, S ou espaço.</div>
+  </div>
+</div>
+
+<div id="game">
+  <div id="hud">
+    <div class="hudBox">🪙 <span id="coins">0</span></div>
+    <div class="hudBox">🏆 <span id="record">0</span></div>
+    <div class="hudBox">📏 <span id="distance">0</span> m</div>
+  </div>
+  <div id="timer">⏱️ 00:00</div>
+  <button id="pause">Ⅱ PAUSAR</button>
+</div>
+
+<div id="message">
+  <div class="panel">
+    <h2 id="messageTitle">PAUSADO</h2>
+    <p id="messageText">O jogo está pausado.</p>
+    <button id="resume">CONTINUAR</button>
+    <button class="secondary" id="restart">RECOMEÇAR</button>
+    <button class="secondary" id="home">MENU</button>
+  </div>
+</div>
+
+<div id="subpanel">
+  <div class="panel">
+    <h2 id="subTitle">OPÇÕES</h2>
+    <div id="subContent"></div>
+    <button class="secondary" id="closeSub">VOLTAR</button>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js";
+
+/* ELEMENTOS */
+const $ = id => document.getElementById(id);
+const menu=$("menu"), game=$("game"), hud=$("hud");
+const timerBox=$("timer"), pauseBtn=$("pause");
+const subpanel=$("subpanel"), subContent=$("subContent");
+
+let scene,camera,renderer,player;
+let playing=false,paused=false,gameOver=false;
+let lane=0,coins=0,distance=0,elapsed=0;
+let speed=24,spawnClock=0,coinClock=0;
+let jumpTime=0,slideTime=0,invulnerable=0;
+let timerFreeze=0,soundOn=true;
+let objects=[];
+let lastTime=0;
+let selectedCharacter=0;
+let selectedMap=0;
+let touchStart=null;
+
+const characters=[
+ {name:"Corredor",color:0x19a7ff},
+ {name:"Aventureiro",color:0x22c55e},
+ {name:"Laranja",color:0xff8c00}
+];
+const maps=[
+ {name:"Cidade",sky:0x77b9e8,ground:0x343d4a},
+ {name:"Pôr do sol",sky:0xffa65c,ground:0x55404a},
+ {name:"Noite",sky:0x101b3a,ground:0x202a3c}
+];
+
+function init(){
+ scene=new THREE.Scene();
+ scene.background=new THREE.Color(maps[selectedMap].sky);
+ scene.fog=new THREE.Fog(maps[selectedMap].sky,55,180);
+
+ camera=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,.1,250);
+ camera.position.set(0,6,12);
+ camera.lookAt(0,1,-10);
+
+ renderer=new THREE.WebGLRenderer({antialias:false,powerPreference:"low-power"});
+ renderer.setSize(innerWidth,innerHeight);
+ renderer.setPixelRatio(Math.min(devicePixelRatio,1.3));
+ renderer.shadowMap.enabled=false;
+ game.appendChild(renderer.domElement);
+
+ const hemi=new THREE.HemisphereLight(0xffffff,0x536070,2);
+ scene.add(hemi);
+ const sun=new THREE.DirectionalLight(0xffffff,1.5);
+ sun.position.set(-8,15,8);
+ scene.add(sun);
+
+ createWorld();
+ createPlayer();
+ window.addEventListener("resize",resize);
+ renderer.setAnimationLoop(animate);
+}
+
+function material(color,roughness=1){
+ return new THREE.MeshStandardMaterial({color,roughness});
+}
+
+function cube(w,h,d,color,x,y,z){
+ const mesh=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material(color));
+ mesh.position.set(x,y,z);
+ scene.add(mesh);
+ return mesh;
+}
+
+function createWorld(){
+ const ground=cube(14,.5,220,maps[selectedMap].ground,0,-.5,-75);
+ ground.userData.ground=true;
+
+ for(let i=-1;i<=1;i++){
+  cube(.08,.04,220,0xffffff,i*3.3,.02,-75);
+ }
+
+ // Trilhos
+ for(let laneIndex=-1;laneIndex<=1;laneIndex++){
+  for(let side of [-.75,.75]){
+   const rail=cube(.12,.12,220,0x9ca3af,laneIndex*3.3+side,.12,-75);
+   rail.userData.rail=true;
+  }
+ }
+
+ // Cidade dos dois lados
+ for(let side of [-1,1]){
+  for(let i=0;i<22;i++){
+   const h=8+Math.random()*22;
+   const w=4+Math.random()*4;
+   const z=-i*10-8;
+   const building=cube(w,h,7,
+    [0x34465f,0x53657a,0x29384d,0x65748b][Math.floor(Math.random()*4)],
+    side*(9+Math.random()*4),h/2-0.2,z);
+   building.userData.building=true;
+   for(let y=2;y<h-1;y+=3){
+    for(let x=-1;x<=1;x++){
+     const win=cube(.5,.7,.04,0xffd875,
+      building.position.x+x*1.1,y,z+3.53);
+     win.userData.building=true;
+    }
+   }
+  }
+ }
+}
+
+function createPlayer(){
+ player=new THREE.Group();
+ const shirt=material(characters[selectedCharacter].color);
+ const dark=material(0x182333);
+ const skin=material(0xe6b58b);
+ const pants=material(0x253b65);
+
+ const body=new THREE.Mesh(new THREE.BoxGeometry(.85,1,.45),shirt);
+ body.position.y=1.55;player.add(body);
+
+ const head=new THREE.Mesh(new THREE.SphereGeometry(.34,10,8),skin);
+ head.position.y=2.35;player.add(head);
+
+ const hair=new THREE.Mesh(new THREE.SphereGeometry(.35,8,6),dark);
+ hair.scale.set(1, .5, 1);
+ hair.position.set(0,2.55,0);player.add(hair);
+
+ const arm1=new THREE.Mesh(new THREE.BoxGeometry(.23,.85,.25),shirt);
+ arm1.position.set(-.58,1.55,0);player.add(arm1);
+ const arm2=arm1.clone();arm2.position.x=.58;player.add(arm2);
+
+ const leg1=new THREE.Mesh(new THREE.BoxGeometry(.3,.8,.35),pants);
+ leg1.position.set(-.23,.65,0);player.add(leg1);
+ const leg2=leg1.clone();leg2.position.x=.23;player.add(leg2);
+
+ const shoe1=new THREE.Mesh(new THREE.BoxGeometry(.38,.18,.55),dark);
+ shoe1.position.set(-.23,.18,-.08);player.add(shoe1);
+ const shoe2=shoe1.clone();shoe2.position.x=.23;player.add(shoe2);
+
+ player.userData.parts={arm1,arm2,leg1,leg2,body};
+ player.position.set(0,0,2);
+ scene.add(player);
+}
+
+function clearObjects(){
+ for(const obj of objects) scene.remove(obj);
+ objects=[];
+}
+
+function spawnObstacle(){
+ const laneIndex=Math.floor(Math.random()*3)-1;
+ const type=Math.random()<.25?"train":"barrier";
+ const x=laneIndex*3.3;
+ const group=new THREE.Group();
+
+ if(type==="barrier"){
+  const base=new THREE.Mesh(new THREE.BoxGeometry(2.2,1.1,.8),material(0xff5a36));
+  base.position.y=.55;group.add(base);
+  const stripe=new THREE.Mesh(new THREE.BoxGeometry(2.25,.18,.83),material(0xffffff));
+  stripe.position.y=.75;group.add(stripe);
+ }else{
+  const body=new THREE.Mesh(new THREE.BoxGeometry(2.7,4,9),material(0x2675a9));
+  body.position.y=2;group.add(body);
+  const front=new THREE.Mesh(new THREE.BoxGeometry(2.4,.7,.2),material(0xffd65a));
+  front.position.set(0,2.8,4.55);group.add(front);
+  for(let z=-3;z<=3;z+=2){
+   const win=new THREE.Mesh(new THREE.BoxGeometry(1.8,1,.08),material(0x9ee7ff));
+   win.position.set(0,2.6,z);group.add(win);
+  }
+  // Rampa visual na frente do trem
+  const ramp=new THREE.Mesh(new THREE.BoxGeometry(2.8,.25,3),material(0x777f8c));
+  ramp.position.set(0,.45,5.5);
+  ramp.rotation.x=-.22;
+  group.add(ramp);
+ }
+ group.position.set(x,0,-90);
+ group.userData={type,lane:laneIndex,hit:false};
+ scene.add(group);objects.push(group);
+}
+
+function spawnCoin(){
+ const laneIndex=Math.floor(Math.random()*3)-1;
+ const coin=new THREE.Mesh(
+  new THREE.TorusGeometry(.48,.14,7,14),
+  new THREE.MeshStandardMaterial({color:0xffd21f,metalness:.6,roughness:.3})
+ );
+ coin.position.set(laneIndex*3.3,1.4,-85);
+ coin.rotation.y=Math.PI/2;
+ coin.userData={type:"coin",lane:laneIndex};
+ scene.add(coin);objects.push(coin);
+}
+
+function updatePlayer(dt){
+ const targetX=lane*3.3;
+ player.position.x+=(targetX-player.position.x)*Math.min(1,dt*12);
+
+ if(jumpTime>0){
+  jumpTime-=dt;
+  player.position.y=Math.sin((1-jumpTime/.85)*Math.PI)*2.5;
+ }else player.position.y=0;
+
+ if(slideTime>0){
+  slideTime-=dt;
+  player.scale.y=.55;
+ }else player.scale.y=1;
+
+ if(invulnerable>0)invulnerable-=dt;
+
+ const p=player.userData.parts;
+ const run=playing&&!paused&&!gameOver;
+ if(run){
+  p.arm1.rotation.x=Math.sin(elapsed*12)*.7;
+  p.arm2.rotation.x=-Math.sin(elapsed*12)*.7;
+  p.leg1.rotation.x=-Math.sin(elapsed*12)*.8;
+  p.leg2.rotation.x=Math.sin(elapsed*12)*.8;
+ }
+}
+
+function updateObjects(dt){
+ for(let i=objects.length-1;i>=0;i--){
+  const obj=objects[i];
+  obj.position.z+=speed*dt;
+
+  if(obj.userData.type==="coin"){
+   obj.rotation.y+=dt*3;
+   if(Math.abs(obj.position.z-player.position.z)<1.25 &&
+      Math.abs(obj.position.x-player.position.x)<1.5 &&
+      Math.abs(player.position.y-0)<1.7 &&
+      slideTime<=0){
+    coins++;
+    timerFreeze=.7;
+    $("coins").textContent=coins;
+    scene.remove(obj);objects.splice(i,1);
+    continue;
+   }
+  }else if(obj.userData.type){
+   const near=Math.abs(obj.position.z-player.position.z)<1.4;
+   const sameLane=Math.abs(obj.position.x-player.position.x)<1.5;
+   if(near&&sameLane&&!obj.userData.hit){
+    obj.userData.hit=true;
+    const jumped=jumpTime>0;
+    const sliding=slideTime>0;
+    if(obj.userData.type==="barrier"&&!jumped)endGame();
+    if(obj.userData.type==="train"&&!jumped&&!sliding)endGame();
+   }
+  }
+
+  if(obj.position.z>15){
+   scene.remove(obj);objects.splice(i,1);
+  }
+ }
+}
+
+function animate(time){
+ const dt=Math.min((time-lastTime)/1000||0,.04);
+ lastTime=time;
+
+ if(playing&&!paused&&!gameOver){
+  elapsed+=dt;
+  distance+=speed*dt/5;
+  speed=Math.min(38,24+distance*.025);
+  spawnClock+=dt;
+  coinClock+=dt;
+
+  if(spawnClock>1.35){
+   spawnClock=0;spawnObstacle();
+  }
+  if(coinClock>1.05){
+   coinClock=0;spawnCoin();
+  }
+
+  if(timerFreeze>0)timerFreeze-=dt;
+  else updateTimer();
+
+  updatePlayer(dt);
+  updateObjects(dt);
+
+  $("distance").textContent=Math.floor(distance);
+ }
+ if(renderer&&scene&&camera)renderer.render(scene,camera);
+}
+
+function updateTimer(){
+ const total=Math.floor(elapsed);
+ const min=String(Math.floor(total/60)).padStart(2,"0");
+ const sec=String(total%60).padStart(2,"0");
+ timerBox.textContent=`⏱️ ${min}:${sec}`;
+}
+
+function startGame(){
+ if(!renderer)init();
+ clearObjects();
+ scene.background=new THREE.Color(maps[selectedMap].sky);
+ scene.fog.color.set(maps[selectedMap].sky);
+
+ coins=0;distance=0;elapsed=0;speed=24;
+ lane=0;jumpTime=0;slideTime=0;timerFreeze=0;
+ spawnClock=0;coinClock=0;
+ player.position.set(0,0,2);
+ player.scale.set(1,1,1);
+
+ $("coins").textContent="0";
+ $("distance").textContent="0";
+ $("record").textContent=localStorage.getItem("urbanRecord")||"0";
+ updateTimer();
+
+ menu.style.display="none";
+ subpanel.style.display="none";
+ $("message").style.display="none";
+ game.style.display="block";
+ hud.style.display="flex";
+ timerBox.style.display="block";
+ pauseBtn.style.display="block";
+ playing=true;paused=false;gameOver=false;
+}
+
+function pauseGame(){
+ if(!playing||gameOver)return;
+ paused=true;
+ $("messageTitle").textContent="PAUSADO";
+ $("messageText").textContent="O jogo está pausado.";
+ $("resume").style.display="inline-block";
+ $("message").style.display="flex";
+}
+
+function endGame(){
+ if(gameOver)return;
+ gameOver=true;playing=false;
+ const old=Number(localStorage.getItem("urbanRecord")||0);
+ const score=Math.floor(distance);
+ if(score>old)localStorage.setItem("urbanRecord",score);
+ $("messageTitle").textContent="FIM DE JOGO!";
+ $("messageText").textContent=`Você fez ${score} metros e pegou ${coins} moedas.`;
+ $("resume").style.display="none";
+ $("message").style.display="flex";
+}
+
+function goHome(){
+ playing=false;paused=false;gameOver=false;
+ $("message").style.display="none";
+ game.style.display="none";
+ hud.style.display="none";
+ timerBox.style.display="none";
+ pauseBtn.style.display="none";
+ menu.style.display="flex";
+}
+
+function openPanel(title,html){
+ $("subTitle").textContent=title;
+ subContent.innerHTML=html;
+ subpanel.style.display="flex";
+}
+
+function chooseCharacter(index){
+ selectedCharacter=index;
+ if(player){
+  const body=player.userData.parts.body;
+  body.material.color.set(characters[index].color);
+ }
+ openPanel("PERSONAGENS",characters.map((c,i)=>
+  `<button class="option" data-character="${i}">${c.name}${i===index?" ✓":""}</button>`
+ ).join(""));
+ subContent.querySelectorAll("[data-character]").forEach(btn=>{
+  btn.addEventListener("click",()=>chooseCharacter(Number(btn.dataset.character)));
+ });
+}
+
+function chooseMap(index){
+ selectedMap=index;
+ if(scene){
+  scene.background=new THREE.Color(maps[index].sky);
+  scene.fog.color.set(maps[index].sky);
+ }
+ openPanel("MAPAS",maps.map((m,i)=>
+  `<button class="option" data-map="${i}">${m.name}${i===index?" ✓":""}</button>`
+ ).join(""));
+ subContent.querySelectorAll("[data-map]").forEach(btn=>{
+  btn.addEventListener("click",()=>chooseMap(Number(btn.dataset.map)));
+ });
+}
+
+function move(direction){
+ if(!playing||paused||gameOver)return;
+ lane=Math.max(-1,Math.min(1,lane+direction));
+}
+function jump(){
+ if(!playing||paused||gameOver||jumpTime>0||slideTime>0)return;
+ jumpTime=.85;
+}
+function slide(){
+ if(!playing||paused||gameOver||slideTime>0||jumpTime>0)return;
+ slideTime=.7;
+}
+
+/* TECLADO */
+window.addEventListener("keydown",e=>{
+ if(e.key==="ArrowLeft"||e.key.toLowerCase()==="a")move(-1);
+ if(e.key==="ArrowRight"||e.key.toLowerCase()==="d")move(1);
+ if(e.key==="ArrowUp"||e.key.toLowerCase()==="w"||e.code==="Space"){
+  e.preventDefault();jump();
+ }
+ if(e.key==="ArrowDown"||e.key.toLowerCase()==="s")slide();
+ if(e.key.toLowerCase()==="p"||e.key==="Escape")pauseGame();
+});
+
+/* CONTROLES POR DESLIZE */
+game.addEventListener("touchstart",e=>{
+ const t=e.changedTouches[0];
+ touchStart={x:t.clientX,y:t.clientY};
+},{passive:true});
+
+game.addEventListener("touchend",e=>{
+ if(!touchStart)return;
+ const t=e.changedTouches[0];
+ const dx=t.clientX-touchStart.x;
+ const dy=t.clientY-touchStart.y;
+ if(Math.max(Math.abs(dx),Math.abs(dy))>25){
+  if(Math.abs(dx)>Math.abs(dy))move(dx>0?1:-1);
+  else if(dy<0)jump();
+  else slide();
+ }
+ touchStart=null;
+},{passive:true});
+
+/* BOTÕES */
+$("play").addEventListener("click",startGame);
+$("pause").addEventListener("click",pauseGame);
+$("resume").addEventListener("click",()=>{
+ paused=false;$("message").style.display="none";
+});
+$("restart").addEventListener("click",startGame);
+$("home").addEventListener("click",goHome);
+$("closeSub").addEventListener("click",()=>subpanel.style.display="none");
+
+$("maps").addEventListener("click",()=>{
+ openPanel("MAPAS",maps.map((m,i)=>
+ `<button class="option" data-map="${i}">${m.name}${i===selectedMap?" ✓":""}</button>`
+ ).join(""));
+ subContent.querySelectorAll("[data-map]").forEach(btn=>
+  btn.addEventListener("click",()=>chooseMap(Number(btn.dataset.map)))
+ );
+});
+
+$("characters").addEventListener("click",()=>{
+ openPanel("PERSONAGENS",characters.map((c,i)=>
+ `<button class="option" data-character="${i}">${c.name}${i===selectedCharacter?" ✓":""}</button>`
+ ).join(""));
+ subContent.querySelectorAll("[data-character]").forEach(btn=>
+  btn.addEventListener("click",()=>chooseCharacter(Number(btn.dataset.character)))
+ );
+});
+
+$("ranking").addEventListener("click",()=>{
+ const record=localStorage.getItem("urbanRecord")||0;
+ openPanel("RANKING",`<p>🏆 Seu melhor recorde:</p><h1>${record} m</h1><p>Este recorde fica salvo neste aparelho.</p>`);
+});
+
+$("sound").addEventListener("click",()=>{
+ soundOn=!soundOn;
+ $("sound").textContent=soundOn?"🔊 SOM: LIGADO":"🔇 SOM: DESLIGADO";
+});
+
+function resize(){
+ if(!camera||!renderer)return;
+ camera.aspect=innerWidth/innerHeight;
+ camera.updateProjectionMatrix();
+ renderer.setSize(innerWidth,innerHeight);
+}
+
+/* INICIAR CENA */
+init();
+</script>
+</body>
+</html>
